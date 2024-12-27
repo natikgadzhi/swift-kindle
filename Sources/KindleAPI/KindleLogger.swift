@@ -10,7 +10,6 @@ import Foundation
 public protocol KindleLoggerProtocol {
     func debug(_ message: @autoclosure () -> String)
     func info(_ message: @autoclosure () -> String)
-    func warning(_ message: @autoclosure () -> String)
     func error(_ message: @autoclosure () -> String)
 }
 
@@ -28,10 +27,6 @@ extension Logger: KindleLoggerProtocol {
 
     public func info(_ message: @autoclosure () -> String) {
         self.info("\(message())")
-    }
-
-    public func warning(_ message: @autoclosure () -> String) {
-        self.warning("\(message())")
     }
 
     public func error(_ message: @autoclosure () -> String) {

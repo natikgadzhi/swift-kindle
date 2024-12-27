@@ -5,6 +5,11 @@ import PackageDescription
 
 let package = Package(
     name: "KindleAPI",
+    platforms: [
+        .iOS(.v17),
+        .macOS(.v14),
+        .macCatalyst(.v17),
+    ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -12,7 +17,7 @@ let package = Package(
             targets: ["KindleAPI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.7.5")
+        .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.7.6")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
