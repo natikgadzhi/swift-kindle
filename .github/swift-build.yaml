@@ -1,0 +1,28 @@
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+    name: Swift ${{matrix.swift_version}} Build & Test
+    runs-on: macos-latest
+    
+    strategy:
+      matrix:
+        # welp, Swift below 6 does not support swift-testing
+        swift_version: ["6.0"]
+    
+    steps:
+
+      # Somehow, swift on macos-latest by default is not yet 6.0?
+    - uses: YOCKOW/Action-setup-swift@v1
+      with:
+        swift-version: ${{matrix.swift_version}}
+    - uses: actions/checkout@v4
+    - name: Build
+      run: swift build -v
+    - name: Run tests
+      run: swift test -v
