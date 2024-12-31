@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import KindleAPI
 import Testing
 
 struct KindleAPITest {
