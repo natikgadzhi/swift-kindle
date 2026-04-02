@@ -127,6 +127,7 @@ public struct KindleJSONBook: Decodable {
         author = deduped
             .first!
             .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
             .reversed()
             .joined(separator: " ")
     }
