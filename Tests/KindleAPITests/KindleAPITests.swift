@@ -201,6 +201,41 @@ struct KindleHTMLBookTests {
         let book = try KindleHTMLBook(from: element)
         #expect(book.author == "Author Name Without Prefix")
     }
+
+    // Amazon has used both plain <h2> and <h2 class="kp-notebook-searchable"> in different page versions.
+    // The parser should handle both.
+    @Test("parses title from h2.kp-notebook-searchable element")
+    func parsesTitleFromClassedH2() throws {
+        let html = """
+            <div id="B084357H23" class="kp-notebook-library-each-book">
+                <img class="kp-notebook-cover-image" src="https://m.media-amazon.com/images/I/cover.jpg"/>
+                <h2 class="kp-notebook-searchable">The Invisible Life of Addie LaRue</h2>
+                <p class="kp-notebook-searchable">By: Schwab, V. E.</p>
+                <input id="kp-notebook-annotated-date-B084357H23" type="hidden" value="Wednesday Jan 1, 2025"/>
+            </div>
+            """
+        let doc = try SwiftSoup.parse(html)
+        let element = try doc.select(".kp-notebook-library-each-book").first()!
+        let book = try KindleHTMLBook(from: element)
+        #expect(book.title == "The Invisible Life of Addie LaRue")
+    }
+
+    @Test("parses title from plain h2 when h2.kp-notebook-searchable is absent")
+    func parsesTitleFromPlainH2WhenClassedH2Absent() throws {
+        // Verifies the fallback: if <h2 class="kp-notebook-searchable"> is not found, fall back to <h2>.
+        let html = """
+            <div id="B084357H23" class="kp-notebook-library-each-book">
+                <img class="kp-notebook-cover-image" src="https://m.media-amazon.com/images/I/cover.jpg"/>
+                <h2>Plain H2 Title</h2>
+                <p class="kp-notebook-searchable">By: Author Name</p>
+                <input id="kp-notebook-annotated-date-B084357H23" type="hidden" value="Wednesday Jan 1, 2025"/>
+            </div>
+            """
+        let doc = try SwiftSoup.parse(html)
+        let element = try doc.select(".kp-notebook-library-each-book").first()!
+        let book = try KindleHTMLBook(from: element)
+        #expect(book.title == "Plain H2 Title")
+    }
 }
 
 // MARK: - KindleHTMLAnnotation Parsing Tests

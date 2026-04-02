@@ -202,23 +202,60 @@ extension KindleAPI {
         }
     }
 
-    /// Parse a string http request response markup into an array of Books and the next page token
+    /// Parse a string http request response markup into an array of Books and the next page token.
+    ///
+    /// ## Amazon Notebook HTML Structure (as of late 2024)
+    ///
+    /// Books are rendered in server-side HTML at `read.amazon.com/notebook?library=list&token=<token>`.
+    /// Each book is a `<div id="<ASIN>" class="kp-notebook-library-each-book ...">` containing:
+    /// - `<h2>` or `<h2 class="kp-notebook-searchable">` — book title
+    /// - `<p class="kp-notebook-searchable">` — author, prefixed with "By: "
+    /// - `<img class="kp-notebook-cover-image">` — cover image
+    /// - `<input id="kp-notebook-annotated-date-<ASIN>" type="hidden" value="<date>">` — last annotation date
+    /// - Pagination token in `<input class="kp-notebook-library-next-page-start" value="<token>">`
+    ///
+    /// ## Debugging selector changes
+    ///
+    /// If Amazon changes the HTML structure and this method fails, enable debug logging and check:
+    /// 1. The HTML preview logged below (first 500 chars) — tells you if server-side rendering is still active
+    /// 2. All unique CSS classes logged below — spot the new book container class
+    /// 3. If the page looks like a JavaScript app shell (no `kp-notebook-*` classes), Amazon may have
+    ///    moved to a fully client-side-rendered (React/SPA) approach. In that case, plain URLSession
+    ///    requests can no longer fetch the book list — a WKWebView-based solution would be required.
+    ///
     private func parseBooksMarkup(_ responseBody: String) throws -> ([KindleHTMLBook], String?) {
-        // Log the first 2000 chars of the HTML response to help debug selector changes.
-        // This is intentionally verbose — remove once Amazon's new markup is understood.
-        let preview = String(responseBody.prefix(2000))
-        logger?.debug("parseBooksMarkup HTML preview (first 2000 chars):\n\(preview)")
+        // Log a short HTML preview and all CSS class names to aid debugging when Amazon changes markup.
+        // These logs are only visible when a logger is configured with debug level enabled.
+        let preview = String(responseBody.prefix(500))
+        logger?.debug("parseBooksMarkup: HTML preview (first 500 chars):\n\(preview)")
 
         let page = try SwiftSoup.parse(responseBody)
+        let pageTitle = (try? page.title()) ?? "(unknown)"
+        logger?.debug("parseBooksMarkup: page title = \"\(pageTitle)\"")
 
-        // Log all top-level class names to help identify new selectors if the old one stops working.
         let allClasses = (try? page.select("[class]").array().compactMap { try? $0.attr("class") }) ?? []
         let uniqueClasses = Array(Set(allClasses.flatMap { $0.split(separator: " ").map(String.init) })).sorted()
-        logger?.debug("parseBooksMarkup: found \(uniqueClasses.count) unique CSS classes in response: \(uniqueClasses.joined(separator: ", "))")
+        let kpClasses = uniqueClasses.filter { $0.hasPrefix("kp-notebook") }
+        logger?.debug("parseBooksMarkup: \(kpClasses.count) kp-notebook-* classes found: \(kpClasses.joined(separator: ", "))")
 
         let booksMarkup = try page.select(".kp-notebook-library-each-book")
         guard !booksMarkup.isEmpty() else {
-            logger?.error("parseBooksMarkup: selector '.kp-notebook-library-each-book' matched 0 elements. Amazon may have changed the markup. See HTML preview above.")
+            // Detect whether this looks like a JavaScript app shell (no kp-notebook classes at all),
+            // which would mean Amazon migrated the page to client-side rendering.
+            if kpClasses.isEmpty {
+                logger?.error(
+                    "parseBooksMarkup: no kp-notebook-* CSS classes found in the response. "
+                    + "Amazon may have migrated read.amazon.com/notebook to a client-side-rendered "
+                    + "(React/SPA) page. Plain URLSession requests will not work — a WKWebView-based "
+                    + "approach may be required. HTML preview: \(preview)"
+                )
+            } else {
+                logger?.error(
+                    "parseBooksMarkup: selector '.kp-notebook-library-each-book' matched 0 elements, "
+                    + "but kp-notebook-* classes are present (\(kpClasses.joined(separator: ", "))). "
+                    + "Amazon likely changed the book container class. HTML preview: \(preview)"
+                )
+            }
             throw KindleError.htmlDecodingError(nil)
         }
 
