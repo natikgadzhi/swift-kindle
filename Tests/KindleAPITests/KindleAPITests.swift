@@ -92,18 +92,23 @@ struct KindleEndpointTests {
         #expect(query.contains("deviceType=device-token-abc"))
     }
 
-    @Test("login URL points to Amazon sign-in")
+    @Test("login URL points to Amazon sign-in and returns to notebook")
     func loginURL() {
         let url = KindleEndpoint.login.url
         #expect(url.host() == "www.amazon.com")
         #expect(url.path() == "/ap/signin")
+        // After Amazon discontinued the Kindle Cloud Reader library page, the login
+        // flow must return to the notebook page instead of kindle-library.
+        let query = url.query() ?? ""
+        #expect(query.contains("notebook"))
+        #expect(!query.contains("kindle-library"))
     }
 
-    @Test("library URL points to Kindle library")
-    func libraryURL() {
-        let url = KindleEndpoint.library.url
+    @Test("notebook URL points to Kindle Notebook")
+    func notebookURL() {
+        let url = KindleEndpoint.notebook.url
         #expect(url.host() == "read.amazon.com")
-        #expect(url.path() == "/kindle-library")
+        #expect(url.path() == "/notebook")
     }
 }
 
