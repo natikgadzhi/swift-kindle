@@ -7,8 +7,8 @@
 import Foundation
 
 /// KindleEndpoint represents API endpoints and auth site that are used to grab the data for books and highlights.
-/// 
-public struct KindleEndpoint {
+///
+public struct KindleEndpoint: Sendable {
 
     let urlString: String
 
