@@ -22,15 +22,18 @@ import OSLog
 
 extension Logger: KindleLoggerProtocol {
     public func debug(_ message: @autoclosure () -> String) {
-        self.debug("\(message())")
+        let msg = message()
+        self.log(level: .debug, "\(msg, privacy: .public)")
     }
 
     public func info(_ message: @autoclosure () -> String) {
-        self.info("\(message())")
+        let msg = message()
+        self.log(level: .info, "\(msg, privacy: .public)")
     }
 
     public func error(_ message: @autoclosure () -> String) {
-        self.error("\(message())")
+        let msg = message()
+        self.log(level: .error, "\(msg, privacy: .public)")
     }
 }
 
