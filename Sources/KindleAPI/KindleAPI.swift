@@ -204,9 +204,21 @@ extension KindleAPI {
 
     /// Parse a string http request response markup into an array of Books and the next page token
     private func parseBooksMarkup(_ responseBody: String) throws -> ([KindleHTMLBook], String?) {
+        // Log the first 2000 chars of the HTML response to help debug selector changes.
+        // This is intentionally verbose — remove once Amazon's new markup is understood.
+        let preview = String(responseBody.prefix(2000))
+        logger?.debug("parseBooksMarkup HTML preview (first 2000 chars):\n\(preview)")
+
         let page = try SwiftSoup.parse(responseBody)
+
+        // Log all top-level class names to help identify new selectors if the old one stops working.
+        let allClasses = (try? page.select("[class]").array().compactMap { try? $0.attr("class") }) ?? []
+        let uniqueClasses = Array(Set(allClasses.flatMap { $0.split(separator: " ").map(String.init) })).sorted()
+        logger?.debug("parseBooksMarkup: found \(uniqueClasses.count) unique CSS classes in response: \(uniqueClasses.joined(separator: ", "))")
+
         let booksMarkup = try page.select(".kp-notebook-library-each-book")
         guard !booksMarkup.isEmpty() else {
+            logger?.error("parseBooksMarkup: selector '.kp-notebook-library-each-book' matched 0 elements. Amazon may have changed the markup. See HTML preview above.")
             throw KindleError.htmlDecodingError(nil)
         }
 
