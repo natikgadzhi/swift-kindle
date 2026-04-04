@@ -17,7 +17,7 @@ let package = Package(
             targets: ["KindleAPI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.7.6")
+        .package(url: "https://github.com/scinfu/SwiftSoup.git", from: "2.11.2")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
