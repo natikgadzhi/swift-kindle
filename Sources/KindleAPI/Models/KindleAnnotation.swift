@@ -10,7 +10,7 @@ import SwiftSoup
 
 /// Describes possible highlight colors
 ///
-public enum KindleHighlightColor: String, Codable, CaseIterable, Identifiable {
+public enum KindleHighlightColor: String, Codable, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 
     case yellow, red, blue, green, purple
@@ -18,13 +18,13 @@ public enum KindleHighlightColor: String, Codable, CaseIterable, Identifiable {
 
 /// Describes Kindle getAnnotations JSON response structure
 ///
-public struct KindleGetAnnotationsResponse: Decodable {
+public struct KindleGetAnnotationsResponse: Decodable, Sendable {
     public let annotations: [KindleJSONAnnotation]
 }
 
 /// Describes annotation types that Kindle API returns
 ///
-public enum KindleAnnotationType: String, Codable {
+public enum KindleAnnotationType: String, Codable, Sendable {
     case note = "kindle.note"
     case highlight = "kindle.highlight"
     case bookmark = "kindle.bookmark"
@@ -32,11 +32,11 @@ public enum KindleAnnotationType: String, Codable {
 
 /// Describes the type of position returned by Kindle API
 ///
-public enum KindleAnnotationPositionType: String, Codable {
+public enum KindleAnnotationPositionType: String, Codable, Sendable {
     case mobi7 = "Mobi7"
 }
 
-public struct KindleJSONAnnotation: Decodable {
+public struct KindleJSONAnnotation: Decodable, Sendable {
 
     public let highlightText: String
     public let noteText: String?
@@ -70,7 +70,7 @@ public struct KindleJSONAnnotation: Decodable {
     }
 }
 
-public struct KindleHTMLAnnotation {
+public struct KindleHTMLAnnotation: Sendable {
 
     public let kindleHighlightID: String
     public let highlightText: String

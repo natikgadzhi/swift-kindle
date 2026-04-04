@@ -11,7 +11,7 @@ import SwiftSoup
 /// KindleAPI is a Kindle web reader API client.
 /// It uses Amazon's session tokens to fetch JSON and HTML data from your Kindle books.
 ///
-public struct KindleAPI {
+public struct KindleAPI: Sendable {
 
     let secrets: HydratedAuthenticationSession
     let session: URLSession

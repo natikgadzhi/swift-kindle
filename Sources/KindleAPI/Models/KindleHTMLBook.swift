@@ -10,7 +10,7 @@ import SwiftSoup
 
 /// A struct that parses out books from Kindle HTML Notebook markup
 ///
-public struct KindleHTMLBook {
+public struct KindleHTMLBook: Sendable {
 
     public let asin: String
     public let title: String

@@ -3,7 +3,7 @@ import Foundation
 /// Describes all required cookie fields that the application should grab from the login webview
 /// to use in ``KindleSessionSecrets`` later.
 ///
-public enum KindleCookies: String, CaseIterable {
+public enum KindleCookies: String, CaseIterable, Sendable {
     case ubidMain = "ubid-main"
     case atMain = "at-main"
     case xMain = "x-main"
@@ -16,14 +16,14 @@ public enum KindleCookies: String, CaseIterable {
 
 /// Describes Kindle and Amazon request header names that are important to set on Kindle API requests
 ///
-public enum KindleRequestHeaders: String, CaseIterable {
+public enum KindleRequestHeaders: String, CaseIterable, Sendable {
     case sessionId = "x-amzn-sessionid"
     case adpSessionId = "x-adp-session-token"
 }
 
 /// Represends Kindle device information as returned from  ``KindleEndpoint.deviceInfo``
 ///
-public struct KindleDeviceInfo: Codable {
+public struct KindleDeviceInfo: Codable, Sendable {
     public let clientHashId: String
     public let deviceName: String
     public let deviceSessionToken: String
@@ -38,7 +38,7 @@ public struct KindleDeviceInfo: Codable {
 /// TODO: This should be a Codable struct, not a class, and the way we save it into Keychain in Scrapes
 /// should not dictate the public API.
 ///
-public class AuthenticationSecrets: NSObject, NSCoding, NSSecureCoding {
+public final class AuthenticationSecrets: NSObject, NSCoding, NSSecureCoding, @unchecked Sendable {
     public static let supportsSecureCoding = true
 
     public let cookies: [HTTPCookie]
@@ -72,7 +72,7 @@ public class AuthenticationSecrets: NSObject, NSCoding, NSSecureCoding {
 
 /// Hydrated Kindle sesion that provides everything a webview needs to perform authenticated Kindle requests.
 ///
-public struct HydratedAuthenticationSession {
+public struct HydratedAuthenticationSession: Sendable {
     public let secrets: AuthenticationSecrets
     public let device: KindleDeviceInfo
 

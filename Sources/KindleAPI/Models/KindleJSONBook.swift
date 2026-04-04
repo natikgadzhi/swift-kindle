@@ -10,7 +10,7 @@ import Foundation
 
 /// Represents Kindle Library books list JSON API response
 ///
-public struct KindleLibrarySearchResponse: Decodable {
+public struct KindleLibrarySearchResponse: Decodable, Sendable {
     public let itemsList: [KindleJSONBook]
     public let paginationToken: String?
     public let libraryType: String
@@ -19,7 +19,7 @@ public struct KindleLibrarySearchResponse: Decodable {
 
 /// Represents Kindle book details fetched from `startReading` Kindle API endpoint
 ///
-public struct KindleBookDetails: Codable {
+public struct KindleBookDetails: Codable, Sendable {
     public let contentVersion: String?
     public let metadataUrl: String?
     public let formatVersion: String?
@@ -29,7 +29,7 @@ public struct KindleBookDetails: Codable {
 
 /// Represents Kindle book last page read data API response
 ///
-public struct KindleBookLastPageReadData: Codable {
+public struct KindleBookLastPageReadData: Codable, Sendable {
     public let position: Int?
     public let syncTime: Date?
 
@@ -41,7 +41,7 @@ public struct KindleBookLastPageReadData: Codable {
 
 /// Represents Kindle book metadata fetched from the `metadata.jsonp` Kindle API call
 ///
-public struct KindleBookMetadata: Codable {
+public struct KindleBookMetadata: Codable, Sendable {
     enum CodingKeys: CodingKey {
         case ACR
         case bookSize
@@ -66,7 +66,7 @@ public struct KindleBookMetadata: Codable {
 
 /// A struct that parses out books from Kindle JSON API response
 ///
-public struct KindleJSONBook: Decodable {
+public struct KindleJSONBook: Decodable, Sendable {
 
     /*
      Kindle book JSON:

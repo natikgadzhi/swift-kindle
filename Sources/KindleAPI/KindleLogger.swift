@@ -7,7 +7,7 @@ import Foundation
 ///
 /// If you're building for an Apple platform, `OSLog.Logger` is the easiest option to go with, and it will work out of the box.
 ///
-public protocol KindleLoggerProtocol {
+public protocol KindleLoggerProtocol: Sendable {
     func debug(_ message: @autoclosure () -> String)
     func info(_ message: @autoclosure () -> String)
     func error(_ message: @autoclosure () -> String)
