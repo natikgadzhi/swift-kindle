@@ -263,6 +263,23 @@ struct KindleHTMLAnnotationTests {
         </div>
         """
 
+    private let bookmarkHTML = """
+        <div id="bookmark-001">
+            <div class="kp-notebook-bookmark"></div>
+            <div id="annotationHighlightHeader">Page: 88</div>
+            <input id="kp-annotation-location" value="2048"/>
+        </div>
+        """
+
+    private let noteWithoutHighlightHTML = """
+        <div id="note-no-highlight-001">
+            <span id="note">Margin thought with no highlight span.</span>
+            <div class="kp-notebook-highlight kp-notebook-highlight-green"></div>
+            <div id="annotationHighlightHeader">Page: 15</div>
+            <input id="kp-annotation-location" value="777"/>
+        </div>
+        """
+
     @Test("parses highlight ID from element id")
     func parsesHighlightID() throws {
         let doc = try SwiftSoup.parse(yellowHighlightHTML)
@@ -329,6 +346,29 @@ struct KindleHTMLAnnotationTests {
         #expect(annotation.highlightColor == .blue)
     }
 
+    @Test("parses bookmark annotations without highlight text")
+    func parsesBookmarkWithoutHighlightText() throws {
+        let doc = try SwiftSoup.parse(bookmarkHTML)
+        let element = try doc.select("div").first()!
+        let annotation = try KindleHTMLAnnotation(from: element)
+        #expect(annotation.annotationType == .bookmark)
+        #expect(annotation.highlightText == "")
+        #expect(annotation.noteText == nil)
+        #expect(annotation.page == 88)
+        #expect(annotation.position == 2048)
+    }
+
+    @Test("keeps note annotations when highlight text is missing")
+    func parsesNoteWithoutHighlightText() throws {
+        let doc = try SwiftSoup.parse(noteWithoutHighlightHTML)
+        let element = try doc.select("div").first()!
+        let annotation = try KindleHTMLAnnotation(from: element)
+        #expect(annotation.annotationType == .note)
+        #expect(annotation.highlightText == "")
+        #expect(annotation.noteText == "Margin thought with no highlight span.")
+        #expect(annotation.highlightColor == .green)
+    }
+
     @Test("parseFromHTML returns empty array when no annotations present")
     func parseFromHTMLEmpty() throws {
         let html = "<div id='kp-notebook-annotations'></div>"
@@ -352,7 +392,6 @@ struct KindleHTMLAnnotationTests {
                     <!-- missing highlight span entirely -->
                     <div class="kp-notebook-highlight kp-notebook-highlight-yellow"></div>
                 </div>
-                <!-- last-child is excluded by the CSS selector, so add a trailing element -->
                 <div id="trailing"></div>
             </div>
             """
@@ -360,6 +399,30 @@ struct KindleHTMLAnnotationTests {
         // The valid one is parsed, the invalid one is skipped
         #expect(annotations.count == 1)
         #expect(annotations[0].highlightText == "Valid text.")
+    }
+
+    @Test("parseFromHTML includes a final bookmark entry")
+    func parseFromHTMLIncludesLastBookmark() throws {
+        let html = """
+            <div id="kp-notebook-annotations">
+                <div id="highlight-001">
+                    <span id="highlight">Valid text.</span>
+                    <div class="kp-notebook-highlight kp-notebook-highlight-yellow"></div>
+                    <div id="annotationHighlightHeader">Page: 1</div>
+                    <input id="kp-annotation-location" value="100"/>
+                </div>
+                <div id="bookmark-001">
+                    <div class="kp-notebook-bookmark"></div>
+                    <div id="annotationHighlightHeader">Page: 2</div>
+                    <input id="kp-annotation-location" value="200"/>
+                </div>
+            </div>
+            """
+
+        let annotations = try KindleHTMLAnnotation.parseFromHTML(markup: html)
+        #expect(annotations.count == 2)
+        #expect(annotations[1].annotationType == .bookmark)
+        #expect(annotations[1].position == 200)
     }
 }
 

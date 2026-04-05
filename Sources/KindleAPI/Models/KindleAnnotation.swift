@@ -85,19 +85,27 @@ public struct KindleHTMLAnnotation: Sendable {
     public init(from markup: SwiftSoup.Element) throws {
         self.kindleHighlightID = markup.id()
 
-        let highlightText = try markup.select("#highlight").first()?.text()
-        guard let highlightText = highlightText else {
+        // If the note text is present and is not empty, this highlight is actually a note.
+        // save the type = .note and the noteText.
+        let highlightText = try markup.select("#highlight").first()?.text().trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let noteText = try markup.select("#note").first()?.text().trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let bookmarkMarker = try Self.hasBookmarkMarker(in: markup)
+        guard (highlightText?.isEmpty == false) || (noteText?.isEmpty == false) || bookmarkMarker else {
             throw KindleError.htmlDecodingError(nil)
         }
 
-        self.highlightText = highlightText
+        self.highlightText = highlightText ?? ""
 
-        // If the note text is present and is not empty, this highlight is actually a note.
-        // save the type = .note and the noteText.
-        let noteText = try markup.select("#note").first()?.text()
         if let noteText, !noteText.isEmpty {
             self.annotationType = .note
             self.noteText = noteText
+        } else if bookmarkMarker || self.highlightText.isEmpty {
+            self.annotationType = .bookmark
+            self.noteText = nil
         } else {
             self.annotationType = .highlight
             self.noteText = nil
@@ -133,10 +141,31 @@ public struct KindleHTMLAnnotation: Sendable {
     public static func parseFromHTML(markup: String) throws -> [KindleHTMLAnnotation] {
         let page = try SwiftSoup.parse(markup)
 
-        let allAnnotations = try page.select("#kp-notebook-annotations > div:not(:last-child)")
+        let allAnnotations = try page.select("#kp-notebook-annotations > div")
 
         // If making any one particular annotation fails, ignore it and move on
         let highlights = allAnnotations.compactMap { try? KindleHTMLAnnotation(from: $0) }
         return highlights
+    }
+
+    private static func hasBookmarkMarker(in markup: SwiftSoup.Element) throws -> Bool {
+        let classAndIDStrings = try markup.select("[class], [id]").array().flatMap { element in
+            [try element.className(), element.id()]
+        }
+
+        if classAndIDStrings.contains(where: { $0.localizedCaseInsensitiveContains("bookmark") }) {
+            return true
+        }
+
+        let accessibleLabels = try markup.select("[aria-label], [title], img[alt]").array().flatMap {
+            element in
+            [
+                try element.attr("aria-label"),
+                try element.attr("title"),
+                try element.attr("alt"),
+            ]
+        }
+
+        return accessibleLabels.contains(where: { $0.localizedCaseInsensitiveContains("bookmark") })
     }
 }
