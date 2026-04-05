@@ -13,6 +13,10 @@ import SwiftSoup
 ///
 public struct KindleAPI: Sendable {
 
+    /// Enables full raw HTML dumps when Kindle notebook parsing fails.
+    /// Keep this off by default because the response can be large and may contain sensitive account data.
+    nonisolated(unsafe) public static var isHTMLDebugDumpEnabled = false
+
     let secrets: HydratedAuthenticationSession
     let session: URLSession
     let logger: KindleLoggerProtocol?
@@ -139,6 +143,7 @@ extension KindleAPI {
     public func getHTMLBooks() async throws -> [KindleHTMLBook] {
         var books: [KindleHTMLBook] = []
         var paginationToken: String? = nil
+        var lastResponseHTML: String = ""
 
         do {
             repeat {
@@ -150,6 +155,7 @@ extension KindleAPI {
                 guard let responseHTML = String(data: data, encoding: .utf8) else {
                     throw KindleError.badHTTPResponse
                 }
+                lastResponseHTML = responseHTML
 
                 let (pageBooks, nextPageTokenFromResponse) = try parseBooksMarkup(responseHTML)
 
@@ -165,6 +171,11 @@ extension KindleAPI {
                 throw error
             }
 
+            if Self.isHTMLDebugDumpEnabled {
+                logger?.debug("parseBooksMarkup full HTML dump start")
+                logger?.debug(lastResponseHTML)
+                logger?.debug("parseBooksMarkup full HTML dump end")
+            }
             logger?.error("Failed to fetch or parse books")
             throw KindleError.htmlDecodingError(error)
         }

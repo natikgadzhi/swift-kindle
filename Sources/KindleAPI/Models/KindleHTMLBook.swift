@@ -37,6 +37,9 @@ public struct KindleHTMLBook: Sendable {
     public init(from markup: SwiftSoup.Element) throws {
 
         let id = markup.id()
+        guard !id.isEmpty else {
+            throw Self.parseFailure("book container is missing its ASIN id")
+        }
         self.asin = id
 
         // Try both the plain h2 and the class-qualified variant for robustness.
@@ -44,38 +47,72 @@ public struct KindleHTMLBook: Sendable {
         let kindleTitle = try markup.select("h2.kp-notebook-searchable").first()?.text()
             ?? markup.select("h2").first()?.text()
         guard let kindleTitle = kindleTitle else {
-            throw KindleError.htmlDecodingError(nil)
+            throw Self.parseFailure("missing title for ASIN \(id)")
         }
 
         self.title = kindleTitle
 
         let authorString = try markup.select("p.kp-notebook-searchable").first()?.text()
         guard let authorString = authorString else {
-            throw KindleError.htmlDecodingError(nil)
+            throw Self.parseFailure("missing author for ASIN \(id)")
         }
 
         if authorString.starts(with: "By: ") {
-            self.author = String(authorString.split(separator: "By: ").last!)
+            self.author = String(authorString.dropFirst("By: ".count))
         } else {
             self.author = authorString
         }
 
+        let modifiedAtElement = try markup.select("#kp-notebook-annotated-date-\(id)").first()
+        guard let modifiedAtElement = modifiedAtElement else {
+            throw Self.parseFailure("missing annotated date input for ASIN \(id)")
+        }
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dateFormatter.dateFormat = "EEEE MMM d, yyyy"
-
-        let modifiedAtString = try markup.select("#kp-notebook-annotated-date-\(id)").val()
-        let modifiedAt = dateFormatter.date(from: modifiedAtString)
+        let modifiedAtString = try modifiedAtElement.attr("value")
+        let modifiedAt = Self.parseNotebookDate(modifiedAtString)
         guard let modifiedAt = modifiedAt else {
-            throw KindleError.htmlDecodingError(nil)
+            throw Self.parseFailure(
+                "could not parse annotated date '\(modifiedAtString)' for ASIN \(id)")
         }
         self.modifiedAt = modifiedAt
 
         guard let imgElement = try markup.select("img.kp-notebook-cover-image").first(),
               let coverImageURL = URL(string: try imgElement.attr("src")) else {
-            throw KindleError.htmlDecodingError(nil)
+            throw Self.parseFailure("missing or invalid cover image URL for ASIN \(id)")
         }
         self.coverImageURL = coverImageURL
+    }
+
+    private static func parseFailure(_ description: String) -> KindleError {
+        KindleError.htmlDecodingError(
+            NSError(domain: "KindleHTMLBook", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: description
+            ])
+        )
+    }
+
+    private static func parseNotebookDate(_ rawValue: String) -> Date? {
+        let cleaned = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            return nil
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+
+        // Amazon has used multiple notebook date variants over time.
+        for format in [
+            "EEEE, MMMM d, yyyy",
+            "EEEE, MMM d, yyyy",
+            "EEEE MMMM d, yyyy",
+            "EEEE MMM d, yyyy"
+        ] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: cleaned) {
+                return date
+            }
+        }
+
+        return nil
     }
 }
