@@ -30,15 +30,16 @@ public struct KindleDeviceInfo: Codable, Sendable {
     public let eid: String
 }
 
-/// Describes all secrets required to make a working Kindle webview and fetch data from it.
+/// Describes the persisted Kindle auth material shared between the app and `KindleAPI`.
 /// It's used to serialize the secrets to and from ``SecureStorage``.
 ///
-/// At runtime, ``AuthenticationManager`` will hydrate these into a ``HydratedAuthenticationSession``
+/// The app-layer ``KindleAuthenticationManager`` hydrates these into a
+/// ``HydratedKindleAuthenticationSession`` after recovering device metadata.
 ///
 /// TODO: This should be a Codable struct, not a class, and the way we save it into Keychain in Scrapes
 /// should not dictate the public API.
 ///
-public final class AuthenticationSecrets: NSObject, NSCoding, NSSecureCoding, @unchecked Sendable {
+public final class KindleAuthenticationSecrets: NSObject, NSCoding, NSSecureCoding, @unchecked Sendable {
     public static let supportsSecureCoding = true
 
     public let cookies: [HTTPCookie]
@@ -70,10 +71,10 @@ public final class AuthenticationSecrets: NSObject, NSCoding, NSSecureCoding, @u
     }
 }
 
-/// Hydrated Kindle sesion that provides everything a webview needs to perform authenticated Kindle requests.
+/// Hydrated Kindle session that provides everything `KindleAPI` needs to perform authenticated requests.
 ///
-public struct HydratedAuthenticationSession: Sendable {
-    public let secrets: AuthenticationSecrets
+public struct HydratedKindleAuthenticationSession: Sendable {
+    public let secrets: KindleAuthenticationSecrets
     public let device: KindleDeviceInfo
 
     public let sessionId: String
@@ -86,7 +87,7 @@ public struct HydratedAuthenticationSession: Sendable {
         secrets.cookies
     }
 
-    public init(secrets: AuthenticationSecrets, device: KindleDeviceInfo, sessionId: String) {
+    public init(secrets: KindleAuthenticationSecrets, device: KindleDeviceInfo, sessionId: String) {
         self.secrets = secrets
         self.device = device
         self.sessionId = sessionId

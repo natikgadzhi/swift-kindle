@@ -17,7 +17,7 @@ public struct KindleAPI: Sendable {
     /// Keep this off by default because the response can be large and may contain sensitive account data.
     nonisolated(unsafe) public static var isHTMLDebugDumpEnabled = false
 
-    let secrets: HydratedAuthenticationSession
+    let secrets: HydratedKindleAuthenticationSession
     let session: URLSession
     let logger: KindleLoggerProtocol?
 
@@ -25,7 +25,7 @@ public struct KindleAPI: Sendable {
     /// The client needs a valid set of hydrated secrets to make it's URLSession, and saves the hydrated session as well.
     ///
     public init(
-        secrets: HydratedAuthenticationSession, logger: KindleLoggerProtocol? = nil
+        secrets: HydratedKindleAuthenticationSession, logger: KindleLoggerProtocol? = nil
     ) {
         self.logger = logger
         self.secrets = secrets
