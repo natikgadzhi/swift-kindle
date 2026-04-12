@@ -8,33 +8,32 @@ import Foundation
 /// If you're building for an Apple platform, `OSLog.Logger` is the easiest option to go with, and it will work out of the box.
 ///
 public protocol KindleLoggerProtocol: Sendable {
-    func debug(_ message: @autoclosure () -> String)
-    func info(_ message: @autoclosure () -> String)
-    func error(_ message: @autoclosure () -> String)
+  func debug(_ message: @autoclosure () -> String)
+  func info(_ message: @autoclosure () -> String)
+  func error(_ message: @autoclosure () -> String)
 }
-
 
 // On Apple platforms, patch extend the default Logger to work with KindleAPI
 //
 #if canImport(OSLog)
 
-import OSLog
+  import OSLog
 
-extension Logger: KindleLoggerProtocol {
+  extension Logger: KindleLoggerProtocol {
     public func debug(_ message: @autoclosure () -> String) {
-        let msg = message()
-        self.log(level: .debug, "\(msg, privacy: .public)")
+      let msg = message()
+      self.log(level: .debug, "\(msg, privacy: .public)")
     }
 
     public func info(_ message: @autoclosure () -> String) {
-        let msg = message()
-        self.log(level: .info, "\(msg, privacy: .public)")
+      let msg = message()
+      self.log(level: .info, "\(msg, privacy: .public)")
     }
 
     public func error(_ message: @autoclosure () -> String) {
-        let msg = message()
-        self.log(level: .error, "\(msg, privacy: .public)")
+      let msg = message()
+      self.log(level: .error, "\(msg, privacy: .public)")
     }
-}
+  }
 
 #endif

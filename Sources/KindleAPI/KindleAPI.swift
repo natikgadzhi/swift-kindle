@@ -13,122 +13,122 @@ import SwiftSoup
 ///
 public struct KindleAPI: Sendable {
 
-    /// Enables full raw HTML dumps when Kindle notebook parsing fails.
-    /// Keep this off by default because the response can be large and may contain sensitive account data.
-    nonisolated(unsafe) public static var isHTMLDebugDumpEnabled = false
+  /// Enables full raw HTML dumps when Kindle notebook parsing fails.
+  /// Keep this off by default because the response can be large and may contain sensitive account data.
+  nonisolated(unsafe) public static var isHTMLDebugDumpEnabled = false
 
-    let secrets: HydratedKindleAuthenticationSession
-    let session: URLSession
-    let logger: KindleLoggerProtocol?
+  let secrets: HydratedKindleAuthenticationSession
+  let session: URLSession
+  let logger: KindleLoggerProtocol?
 
-    /// Initializes a new KindleAPI client.
-    /// The client needs a valid set of hydrated secrets to make it's URLSession, and saves the hydrated session as well.
-    ///
-    public init(
-        secrets: HydratedKindleAuthenticationSession, logger: KindleLoggerProtocol? = nil
-    ) {
-        self.logger = logger
-        self.secrets = secrets
-        self.session = URLSession(configuration: .ephemeral)
+  /// Initializes a new KindleAPI client.
+  /// The client needs a valid set of hydrated secrets to make it's URLSession, and saves the hydrated session as well.
+  ///
+  public init(
+    secrets: HydratedKindleAuthenticationSession, logger: KindleLoggerProtocol? = nil
+  ) {
+    self.logger = logger
+    self.secrets = secrets
+    self.session = URLSession(configuration: .ephemeral)
 
-        session.configuration.httpCookieStorage = HTTPCookieStorage()
-        for cookie in secrets.cookies {
-            session.configuration.httpCookieStorage?.setCookie(cookie)
-        }
+    session.configuration.httpCookieStorage = HTTPCookieStorage()
+    for cookie in secrets.cookies {
+      session.configuration.httpCookieStorage?.setCookie(cookie)
+    }
+  }
+
+  /// Prepare the URLRequest to be sent to Kindle servers by adding additional request headers for `x-amzn-sessionid` and `x-adp-session-token`
+  ///
+  private func makeRequest(url: URL) -> URLRequest {
+    var request = URLRequest(url: url)
+
+    let sessionId = secrets.secrets.cookies.cookie(named: KindleCookies.sessionId.rawValue)!
+    request.setValue(sessionId, forHTTPHeaderField: KindleRequestHeaders.sessionId.rawValue)
+    request.setValue(
+      secrets.adpSessionId, forHTTPHeaderField: KindleRequestHeaders.adpSessionId.rawValue)
+    return request
+  }
+
+  private func fetchAndDecode<T>(into: T.Type, request: URLRequest) async throws -> T
+  where T: Decodable {
+    let (data, _) = try await dataWithHTTPValidation(request: request, maxAttempts: 1)
+
+    do {
+      return try JSONDecoder().decode(T.self, from: data)
+    } catch {
+      throw KindleError.decodingError(error)
+    }
+  }
+
+  /// Fetches the list of books with partial information without fetching additional details or highlights for each specific book
+  ///
+  public func getBooks() async throws -> [KindleJSONBook] {
+    var numberOfBooks: Int = 0
+    var books: [KindleJSONBook] = []
+    var paginationToken: String? = ""
+
+    while paginationToken != nil {
+      let request = makeRequest(
+        url: KindleEndpoint.booksListJSON(paginationToken: paginationToken!).url)
+      let parsed = try await fetchAndDecode(
+        into: KindleLibrarySearchResponse.self, request: request)
+
+      books.append(contentsOf: parsed.itemsList)
+      paginationToken = parsed.paginationToken
+      numberOfBooks += parsed.itemsList.count
     }
 
-    /// Prepare the URLRequest to be sent to Kindle servers by adding additional request headers for `x-amzn-sessionid` and `x-adp-session-token`
-    ///
-    private func makeRequest(url: URL) -> URLRequest {
-        var request = URLRequest(url: url)
+    return books
+  }
 
-        let sessionId = secrets.secrets.cookies.cookie(named: KindleCookies.sessionId.rawValue)!
-        request.setValue(sessionId, forHTTPHeaderField: KindleRequestHeaders.sessionId.rawValue)
-        request.setValue(
-            secrets.adpSessionId, forHTTPHeaderField: KindleRequestHeaders.adpSessionId.rawValue)
-        return request
+  /// Retrieves book details and metadata for a given book.
+  /// It has to do two HTTP requests to get them.
+  ///
+  public func getBookMetadata(asin: String) async throws -> (
+    KindleBookDetails, KindleBookMetadata
+  ) {
+    // Start with loading the basic book details
+    let request = makeRequest(url: KindleEndpoint.bookDetailsJSON(asin: asin).url)
+    let details = try await fetchAndDecode(into: KindleBookDetails.self, request: request)
+
+    guard let metadataURL = details.metadataUrl else {
+      throw KindleError.noMetadata
     }
 
-    private func fetchAndDecode<T>(into: T.Type, request: URLRequest) async throws -> T
-    where T: Decodable {
-        let (data, _) = try await dataWithHTTPValidation(request: request, maxAttempts: 1)
+    // Based on book details, we make the second request
+    // to `details.metadataUrl`.
+    //
+    let metadataRequest = makeRequest(url: URL(string: metadataURL)!)
+    let (data, _) = try await session.data(for: metadataRequest)
+    let stripped = stripJSONP(String(data: data, encoding: .utf8)!).data(using: .utf8)!
+    let metadata = try JSONDecoder().decode(KindleBookMetadata.self, from: stripped)
 
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw KindleError.decodingError(error)
-        }
-    }
+    return (details, metadata)
+  }
 
-    /// Fetches the list of books with partial information without fetching additional details or highlights for each specific book
-    ///
-    public func getBooks() async throws -> [KindleJSONBook] {
-        var numberOfBooks: Int = 0
-        var books: [KindleJSONBook] = []
-        var paginationToken: String? = ""
+  /// Retrieves annotations for a given book from Kindle JSON API
+  ///
+  /// - Parameters:
+  ///     - asin: The ASIN of the book
+  ///     - refEmId: The refEmId of the book. You can obtain it from ``KindleBookMetadata``.
+  ///     - yjFormatVersion: The yjFormatVersion of the book, it's in ``KindleBookDetails``.
+  ///
+  public func getAnnotations(
+    for asin: String, refEmId: String, yjFormatVersion: String
+  )
+    async throws -> [KindleJSONAnnotation]
+  {
+    let url = KindleEndpoint.annotationsListJSON(
+      asin: asin,
+      refEmId: refEmId,
+      yjFormatVersion: yjFormatVersion
+    ).url
 
-        while paginationToken != nil {
-            let request = makeRequest(
-                url: KindleEndpoint.booksListJSON(paginationToken: paginationToken!).url)
-            let parsed = try await fetchAndDecode(
-                into: KindleLibrarySearchResponse.self, request: request)
-
-            books.append(contentsOf: parsed.itemsList)
-            paginationToken = parsed.paginationToken
-            numberOfBooks += parsed.itemsList.count
-        }
-
-        return books
-    }
-
-    /// Retrieves book details and metadata for a given book.
-    /// It has to do two HTTP requests to get them.
-    ///
-    public func getBookMetadata(asin: String) async throws -> (
-        KindleBookDetails, KindleBookMetadata
-    ) {
-        // Start with loading the basic book details
-        let request = makeRequest(url: KindleEndpoint.bookDetailsJSON(asin: asin).url)
-        let details = try await fetchAndDecode(into: KindleBookDetails.self, request: request)
-
-        guard let metadataURL = details.metadataUrl else {
-            throw KindleError.noMetadata
-        }
-
-        // Based on book details, we make the second request
-        // to `details.metadataUrl`.
-        //
-        let metadataRequest = makeRequest(url: URL(string: metadataURL)!)
-        let (data, _) = try await session.data(for: metadataRequest)
-        let stripped = stripJSONP(String(data: data, encoding: .utf8)!).data(using: .utf8)!
-        let metadata = try JSONDecoder().decode(KindleBookMetadata.self, from: stripped)
-
-        return (details, metadata)
-    }
-
-    /// Retrieves annotations for a given book from Kindle JSON API
-    ///
-    /// - Parameters:
-    ///     - asin: The ASIN of the book
-    ///     - refEmId: The refEmId of the book. You can obtain it from ``KindleBookMetadata``.
-    ///     - yjFormatVersion: The yjFormatVersion of the book, it's in ``KindleBookDetails``.
-    ///
-    public func getAnnotations(
-        for asin: String, refEmId: String, yjFormatVersion: String
-    )
-        async throws -> [KindleJSONAnnotation]
-    {
-        let url = KindleEndpoint.annotationsListJSON(
-            asin: asin,
-            refEmId: refEmId,
-            yjFormatVersion: yjFormatVersion
-        ).url
-
-        let request = makeRequest(url: url)
-        let parsed = try await fetchAndDecode(
-            into: KindleGetAnnotationsResponse.self, request: request)
-        return parsed.annotations
-    }
+    let request = makeRequest(url: url)
+    let parsed = try await fetchAndDecode(
+      into: KindleGetAnnotationsResponse.self, request: request)
+    return parsed.annotations
+  }
 }
 
 //
@@ -137,195 +137,199 @@ public struct KindleAPI: Sendable {
 
 extension KindleAPI {
 
-    /// Request and return the list of ``Book`` from Kindle's HTML Notebook site.
-    /// Automatically handles pagination internally and returns when the full list of books is retrieved.
-    ///
-    public func getHTMLBooks() async throws -> [KindleHTMLBook] {
-        var books: [KindleHTMLBook] = []
-        var paginationToken: String? = nil
-        var lastResponseHTML: String = ""
+  /// Request and return the list of ``Book`` from Kindle's HTML Notebook site.
+  /// Automatically handles pagination internally and returns when the full list of books is retrieved.
+  ///
+  public func getHTMLBooks() async throws -> [KindleHTMLBook] {
+    var books: [KindleHTMLBook] = []
+    var paginationToken: String? = nil
+    var lastResponseHTML: String = ""
 
-        do {
-            repeat {
-                let request = makeRequest(
-                    url: KindleEndpoint.booksListHTML(paginationToken: paginationToken).url)
+    do {
+      repeat {
+        let request = makeRequest(
+          url: KindleEndpoint.booksListHTML(paginationToken: paginationToken).url)
 
-                let (data, _) = try await dataWithHTTPValidation(request: request)
+        let (data, _) = try await dataWithHTTPValidation(request: request)
 
-                guard let responseHTML = String(data: data, encoding: .utf8) else {
-                    throw KindleError.badHTTPResponse
-                }
-                lastResponseHTML = responseHTML
-
-                let (pageBooks, nextPageTokenFromResponse) = try parseBooksMarkup(responseHTML)
-
-                // naming is critical here: out of the loop scoped nextPageToken cannot be reassigned with the let tuple assignment above,
-                // so we have to use the temporary variable nextPageTokenFromResponse.
-                paginationToken = nextPageTokenFromResponse
-                books.append(contentsOf: pageBooks)
-
-            } while paginationToken.notEmpty
-        } catch {
-            // Throw unauthenticated transparently
-            if case KindleError.unauthenticated = error {
-                throw error
-            }
-
-            if Self.isHTMLDebugDumpEnabled {
-                logger?.debug("parseBooksMarkup full HTML dump start")
-                logger?.debug(lastResponseHTML)
-                logger?.debug("parseBooksMarkup full HTML dump end")
-            }
-            logger?.error("Failed to fetch or parse books")
-            throw KindleError.htmlDecodingError(error)
+        guard let responseHTML = String(data: data, encoding: .utf8) else {
+          throw KindleError.badHTTPResponse
         }
+        lastResponseHTML = responseHTML
 
-        return books
+        let (pageBooks, nextPageTokenFromResponse) = try parseBooksMarkup(responseHTML)
+
+        // naming is critical here: out of the loop scoped nextPageToken cannot be reassigned with the let tuple assignment above,
+        // so we have to use the temporary variable nextPageTokenFromResponse.
+        paginationToken = nextPageTokenFromResponse
+        books.append(contentsOf: pageBooks)
+
+      } while paginationToken.notEmpty
+    } catch {
+      // Throw unauthenticated transparently
+      if case KindleError.unauthenticated = error {
+        throw error
+      }
+
+      if Self.isHTMLDebugDumpEnabled {
+        logger?.debug("parseBooksMarkup full HTML dump start")
+        logger?.debug(lastResponseHTML)
+        logger?.debug("parseBooksMarkup full HTML dump end")
+      }
+      logger?.error("Failed to fetch or parse books")
+      throw KindleError.htmlDecodingError(error)
     }
 
-    /// Fetches ``Annotaion`` objects from Kindle HTML Notebook site
-    /// Does NOT paginate automatically.
-    ///
-    public func getHTMLAnnotations(for asin: String) async throws -> [KindleHTMLAnnotation] {
-        let url = KindleEndpoint.annotationsListHTML(asin: asin).url
-        let request = makeRequest(url: url)
+    return books
+  }
 
-        do {
-            let (data, _) = try await dataWithHTTPValidation(request: request)
+  /// Fetches ``Annotaion`` objects from Kindle HTML Notebook site
+  /// Does NOT paginate automatically.
+  ///
+  public func getHTMLAnnotations(for asin: String) async throws -> [KindleHTMLAnnotation] {
+    let url = KindleEndpoint.annotationsListHTML(asin: asin).url
+    let request = makeRequest(url: url)
 
-            guard let responseHTML = String(data: data, encoding: .utf8) else {
-                throw KindleError.badHTTPResponse
-            }
+    do {
+      let (data, _) = try await dataWithHTTPValidation(request: request)
 
-            return try KindleHTMLAnnotation.parseFromHTML(markup: responseHTML)
-        }
+      guard let responseHTML = String(data: data, encoding: .utf8) else {
+        throw KindleError.badHTTPResponse
+      }
 
-        // If we got a general error that we did not throw ourselves (not KindleAPIError),
-        // it's most likely in markup parsing because the format changed.
-        catch {
-            // Throw unauthenticated transparently
-            if case KindleError.unauthenticated = error {
-                throw error
-            }
-
-            logger?.error("Failed to fetch or parse annotations")
-            throw KindleError.htmlDecodingError(error)
-        }
+      return try KindleHTMLAnnotation.parseFromHTML(markup: responseHTML)
     }
 
-    /// Parse a string http request response markup into an array of Books and the next page token.
-    ///
-    /// ## Amazon Notebook HTML Structure (as of late 2024)
-    ///
-    /// Books are rendered in server-side HTML at `read.amazon.com/notebook?library=list&token=<token>`.
-    /// Each book is a `<div id="<ASIN>" class="kp-notebook-library-each-book ...">` containing:
-    /// - `<h2>` or `<h2 class="kp-notebook-searchable">` — book title
-    /// - `<p class="kp-notebook-searchable">` — author, prefixed with "By: "
-    /// - `<img class="kp-notebook-cover-image">` — cover image
-    /// - `<input id="kp-notebook-annotated-date-<ASIN>" type="hidden" value="<date>">` — last annotation date
-    /// - Pagination token in `<input class="kp-notebook-library-next-page-start" value="<token>">`
-    ///
-    /// ## Debugging selector changes
-    ///
-    /// If Amazon changes the HTML structure and this method fails, enable debug logging and check:
-    /// 1. The HTML preview logged below (first 500 chars) — tells you if server-side rendering is still active
-    /// 2. All unique CSS classes logged below — spot the new book container class
-    /// 3. If the page looks like a JavaScript app shell (no `kp-notebook-*` classes), Amazon may have
-    ///    moved to a fully client-side-rendered (React/SPA) approach. In that case, plain URLSession
-    ///    requests can no longer fetch the book list — a WKWebView-based solution would be required.
-    ///
-    private func parseBooksMarkup(_ responseBody: String) throws -> ([KindleHTMLBook], String?) {
-        // Log a short HTML preview and all CSS class names to aid debugging when Amazon changes markup.
-        // These logs are only visible when a logger is configured with debug level enabled.
-        let preview = String(responseBody.prefix(500))
-        logger?.debug("parseBooksMarkup: HTML preview (first 500 chars):\n\(preview)")
+    // If we got a general error that we did not throw ourselves (not KindleAPIError),
+    // it's most likely in markup parsing because the format changed.
+    catch {
+      // Throw unauthenticated transparently
+      if case KindleError.unauthenticated = error {
+        throw error
+      }
 
-        let page = try SwiftSoup.parse(responseBody)
-        let pageTitle = (try? page.title()) ?? "(unknown)"
-        logger?.debug("parseBooksMarkup: page title = \"\(pageTitle)\"")
-
-        let allClasses = (try? page.select("[class]").array().compactMap { try? $0.attr("class") }) ?? []
-        let uniqueClasses = Array(Set(allClasses.flatMap { $0.split(separator: " ").map(String.init) })).sorted()
-        let kpClasses = uniqueClasses.filter { $0.hasPrefix("kp-notebook") }
-        logger?.debug("parseBooksMarkup: \(kpClasses.count) kp-notebook-* classes found: \(kpClasses.joined(separator: ", "))")
-
-        let booksMarkup = try page.select(".kp-notebook-library-each-book")
-        guard !booksMarkup.isEmpty() else {
-            // Detect whether this looks like a JavaScript app shell (no kp-notebook classes at all),
-            // which would mean Amazon migrated the page to client-side rendering.
-            if kpClasses.isEmpty {
-                logger?.error(
-                    "parseBooksMarkup: no kp-notebook-* CSS classes found in the response. "
-                    + "Amazon may have migrated read.amazon.com/notebook to a client-side-rendered "
-                    + "(React/SPA) page. Plain URLSession requests will not work — a WKWebView-based "
-                    + "approach may be required. HTML preview: \(preview)"
-                )
-            } else {
-                logger?.error(
-                    "parseBooksMarkup: selector '.kp-notebook-library-each-book' matched 0 elements, "
-                    + "but kp-notebook-* classes are present (\(kpClasses.joined(separator: ", "))). "
-                    + "Amazon likely changed the book container class. HTML preview: \(preview)"
-                )
-            }
-            throw KindleError.htmlDecodingError(nil)
-        }
-
-        let nextPageToken = try page.select(".kp-notebook-library-next-page-start").first()?.attr(
-            "value")
-        let books = try booksMarkup.map { try KindleHTMLBook(from: $0) }
-        return (books, nextPageToken)
+      logger?.error("Failed to fetch or parse annotations")
+      throw KindleError.htmlDecodingError(error)
     }
+  }
 
-    /// Sends the request and ensures it returned a valid 200...299 HTTP response, throws an error otherwise.
-    ///
-    /// Returns:
-    ///     (``Data``,  ``URLResponse``) — same as ``URLSession.data()``
-    ///
-    private func dataWithHTTPValidation(request: URLRequest, maxAttempts: UInt = 2) async throws
-        -> (data: Data, response: URLResponse)
-    {
-        var attemptCount = 1
+  /// Parse a string http request response markup into an array of Books and the next page token.
+  ///
+  /// ## Amazon Notebook HTML Structure (as of late 2024)
+  ///
+  /// Books are rendered in server-side HTML at `read.amazon.com/notebook?library=list&token=<token>`.
+  /// Each book is a `<div id="<ASIN>" class="kp-notebook-library-each-book ...">` containing:
+  /// - `<h2>` or `<h2 class="kp-notebook-searchable">` — book title
+  /// - `<p class="kp-notebook-searchable">` — author, prefixed with "By: "
+  /// - `<img class="kp-notebook-cover-image">` — cover image
+  /// - `<input id="kp-notebook-annotated-date-<ASIN>" type="hidden" value="<date>">` — last annotation date
+  /// - Pagination token in `<input class="kp-notebook-library-next-page-start" value="<token>">`
+  ///
+  /// ## Debugging selector changes
+  ///
+  /// If Amazon changes the HTML structure and this method fails, enable debug logging and check:
+  /// 1. The HTML preview logged below (first 500 chars) — tells you if server-side rendering is still active
+  /// 2. All unique CSS classes logged below — spot the new book container class
+  /// 3. If the page looks like a JavaScript app shell (no `kp-notebook-*` classes), Amazon may have
+  ///    moved to a fully client-side-rendered (React/SPA) approach. In that case, plain URLSession
+  ///    requests can no longer fetch the book list — a WKWebView-based solution would be required.
+  ///
+  private func parseBooksMarkup(_ responseBody: String) throws -> ([KindleHTMLBook], String?) {
+    // Log a short HTML preview and all CSS class names to aid debugging when Amazon changes markup.
+    // These logs are only visible when a logger is configured with debug level enabled.
+    let preview = String(responseBody.prefix(500))
+    logger?.debug("parseBooksMarkup: HTML preview (first 500 chars):\n\(preview)")
 
-        while attemptCount <= maxAttempts {
-            let (data, response) = try await session.data(for: request)
+    let page = try SwiftSoup.parse(responseBody)
+    let pageTitle = (try? page.title()) ?? "(unknown)"
+    logger?.debug("parseBooksMarkup: page title = \"\(pageTitle)\"")
 
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw KindleError.badHTTPResponse
-            }
+    let allClasses =
+      (try? page.select("[class]").array().compactMap { try? $0.attr("class") }) ?? []
+    let uniqueClasses = Array(Set(allClasses.flatMap { $0.split(separator: " ").map(String.init) }))
+      .sorted()
+    let kpClasses = uniqueClasses.filter { $0.hasPrefix("kp-notebook") }
+    logger?.debug(
+      "parseBooksMarkup: \(kpClasses.count) kp-notebook-* classes found: \(kpClasses.joined(separator: ", "))"
+    )
 
-            switch httpResponse.statusCode {
-            case 401...403:
-                throw KindleError.unauthenticated
-            case 500...599:
-                // Sometimes Kindle HTML pages render HTTP 500, but if you retry right away,
-                // they return the data. So, we attempt retrying right away.
-                if attemptCount < maxAttempts {
-                    logger?.error("Retrying request with \(request.url!) for \(attemptCount) time")
-                    attemptCount += 1
-                } else {
-                    throw KindleError.kindleAPIError
-                }
-            case 200...299:
-                // Amazon is funny — they redirect to the signin page without throwing HTTP 40*
-                // We could intercept the redirect, but it's easier to just check the resulting URL instead.
-                if let url = httpResponse.url, url.path().starts(with: "/ap/signin") {
-                    // Safe to unwrap because if we're here, means we've already successfully navigated to this URL, means it's for sure there.
-                    logger?.error(
-                        "Request returned HTTP 401, throwing .unauthenticated. URL: \(request.url!)"
-                    )
-                    throw KindleError.unauthenticated
-                }
-
-                return (data, response)
-            default:
-                throw KindleError.badHTTPResponse
-            }
-        }
-
-        // We should only end up here if we ran out of retries, but have not returned any data yet
-        // and neither thrown any errors. This should never happen. Upstream, we should collect this and die.
+    let booksMarkup = try page.select(".kp-notebook-library-each-book")
+    guard !booksMarkup.isEmpty() else {
+      // Detect whether this looks like a JavaScript app shell (no kp-notebook classes at all),
+      // which would mean Amazon migrated the page to client-side rendering.
+      if kpClasses.isEmpty {
         logger?.error(
-            "Unexpectedly got out of the while loop with retries without returning or erroring out")
-        throw KindleError.kindleHTMLClientError
+          "parseBooksMarkup: no kp-notebook-* CSS classes found in the response. "
+            + "Amazon may have migrated read.amazon.com/notebook to a client-side-rendered "
+            + "(React/SPA) page. Plain URLSession requests will not work — a WKWebView-based "
+            + "approach may be required. HTML preview: \(preview)"
+        )
+      } else {
+        logger?.error(
+          "parseBooksMarkup: selector '.kp-notebook-library-each-book' matched 0 elements, "
+            + "but kp-notebook-* classes are present (\(kpClasses.joined(separator: ", "))). "
+            + "Amazon likely changed the book container class. HTML preview: \(preview)"
+        )
+      }
+      throw KindleError.htmlDecodingError(nil)
     }
+
+    let nextPageToken = try page.select(".kp-notebook-library-next-page-start").first()?.attr(
+      "value")
+    let books = try booksMarkup.map { try KindleHTMLBook(from: $0) }
+    return (books, nextPageToken)
+  }
+
+  /// Sends the request and ensures it returned a valid 200...299 HTTP response, throws an error otherwise.
+  ///
+  /// Returns:
+  ///     (``Data``,  ``URLResponse``) — same as ``URLSession.data()``
+  ///
+  private func dataWithHTTPValidation(request: URLRequest, maxAttempts: UInt = 2) async throws
+    -> (data: Data, response: URLResponse)
+  {
+    var attemptCount = 1
+
+    while attemptCount <= maxAttempts {
+      let (data, response) = try await session.data(for: request)
+
+      guard let httpResponse = response as? HTTPURLResponse else {
+        throw KindleError.badHTTPResponse
+      }
+
+      switch httpResponse.statusCode {
+      case 401...403:
+        throw KindleError.unauthenticated
+      case 500...599:
+        // Sometimes Kindle HTML pages render HTTP 500, but if you retry right away,
+        // they return the data. So, we attempt retrying right away.
+        if attemptCount < maxAttempts {
+          logger?.error("Retrying request with \(request.url!) for \(attemptCount) time")
+          attemptCount += 1
+        } else {
+          throw KindleError.kindleAPIError
+        }
+      case 200...299:
+        // Amazon is funny — they redirect to the signin page without throwing HTTP 40*
+        // We could intercept the redirect, but it's easier to just check the resulting URL instead.
+        if let url = httpResponse.url, url.path().starts(with: "/ap/signin") {
+          // Safe to unwrap because if we're here, means we've already successfully navigated to this URL, means it's for sure there.
+          logger?.error(
+            "Request returned HTTP 401, throwing .unauthenticated. URL: \(request.url!)"
+          )
+          throw KindleError.unauthenticated
+        }
+
+        return (data, response)
+      default:
+        throw KindleError.badHTTPResponse
+      }
+    }
+
+    // We should only end up here if we ran out of retries, but have not returned any data yet
+    // and neither thrown any errors. This should never happen. Upstream, we should collect this and die.
+    logger?.error(
+      "Unexpectedly got out of the while loop with retries without returning or erroring out")
+    throw KindleError.kindleHTMLClientError
+  }
 }
