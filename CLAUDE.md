@@ -47,19 +47,18 @@ This is a standalone, cross-platform Swift package. It is used as a git submodul
 
 # Multi-agent Work Environment
 
+Builds in this repo run as Workflows, Claude Code's multi-agent mode, not as agent teams. Start build sessions with `/effort ultracode` (or `claude --effort ultracode`) so each phase can run as a workflow without asking first. Without ultracode, propose the phase's workflow with a rough agent count and wait for the user to write `ultracode` or "use a workflow".
+
 ## How It Works
 
 1. The user describes the work
-2. The lead agent reads it
-3. The lead agent decomposes the project into a phased task plan
-4. The lead agent spawn workers agents via the `Agent` tool to execute tasks in parallel
-5. Builder workers build code, write tests, and commit their work, all in independent worktrees
-6. Reviewer agents review, request changes, and keep a consistent, high quality bar in the project
-7. The lead agent coordinates work, works with the user, keeps `main` up to date, moves tasks to `in-progress` and `done`, merges pull requests, and executes any other requests on behalf of the user.
+2. The lead (you, the main session) reads it, agrees on a plan with the user, and writes it as phased task files in `tasks/backlog/`
+3. Each phase runs as one workflow: builder agents implement the phase's tasks in parallel, each in its own worktree, and open a pull request; reviewer agents review each PR as soon as it opens; builders fix what reviewers flag
+4. Between phases the lead stays in the loop: reads the workflow's result, merges approved PRs, keeps `main` up to date, and checks in with the user before starting the next phase
 
-## Lead Agent Behavior
+## Lead Behavior
 
-The user will first discuss high level plan with you. Once the user confirms we're good to start work:
+The user will first discuss the high level plan with you. Once the user confirms we're good to start work:
 
 1. **Read** `README.md` and other top-level docs to understand the project
 2. **Plan** — Break the project into phases and tasks:
@@ -68,65 +67,38 @@ The user will first discuss high level plan with you. Once the user confirms we'
    - **Phase 2: Implementation** — Feature implementation (parallelize heavily here)
    - **Phase 3: Integration** — Wire components together, integration tests
    - **Phase 4: Polish** — Error handling, edge cases, documentation, final tests
-3. **Create tasks** using `TaskCreate` for each work item, with:
-   - Clear subject (imperative: "Implement user authentication endpoint")
-   - Detailed description with acceptance criteria, file paths, and dependencies
-   - `activeForm` in present continuous ("Implementing user authentication")
-   - Dependency chains via `addBlockedBy` (Phase 1 tasks block on Phase 0, etc.)
-   - List of edge cases that are covered, and edge cases that are not important.
-4. **Spawn workers** using the `Agent` tool with `subagent_type: "general-purpose"`
-   - Spawn 3-6 workers depending on project complexity
-   - Use the best model available to you with the maximum effort
-   - Pass the task ID and full task details explicitly in each worker's `prompt`
-   - Name them descriptively in the description: `builder-1`, `builder-2`, `reviewer-1`, `reviewer-2`, `tester`, etc.
-   - Generally prefer reviewers to have larger context and bigger models
-   - Keep the main checkout on `main` branch and `git pull --ff` after each task is completed and merged
-5. **Assign tasks** to idle workers as they become available
-6. **Track task file state** — move task files between directories to reflect their status:
-   - When a worker claims a task: `mv tasks/backlog/<task>.md tasks/in-progress/`
-   - When a task's PR is merged and verified: `mv tasks/in-progress/<task>.md tasks/done/`
-   - This keeps the file system in sync with actual task status at all times
-7. **Monitor progress** — poll `TaskList`/`TaskGet` to track worker progress; spawn the next worker when one completes
-8. **Assign reviews of pull requests**. Once a worker prepares a task implementation in a pull request, assign a task to review this pull request to one of the reviewer agents
+3. **Write task files** in `tasks/backlog/` (see Task File System), each with:
+   - Clear imperative title ("Implement user authentication endpoint")
+   - Acceptance criteria, file paths, and dependencies
+   - Edge cases that are covered, and edge cases that are not important
+   - Tasks within one phase must be independent of each other. If task B needs task A's output, B goes in a later phase.
+4. **Run the phase as a workflow** (load the `workflow-authoring` skill before writing the script):
+   - `pipeline()` over the phase's task files with stages build → review → fix, so each PR goes to review as soon as it is ready. No barrier between build and review.
+   - Builders run with `isolation: 'worktree'` and follow Builder Instructions below. They return the branch, PR URL, check results, and edge cases covered and not covered (use a `schema`).
+   - Reviewers follow Reviewer Instructions below. Use two per PR with different lenses (correctness and tests; security and simplicity) and a higher `effort` than the builders. They post their review on the PR and return a verdict.
+   - On "changes requested", a builder addresses the feedback on the same branch and the PR goes back to review. Allow at most 2 rounds, then return the PR as unresolved instead of looping.
+   - Builders and reviewers inherit the session model; only set `model` if the user asks.
+5. **Merge** once the workflow returns: merge approved PRs one at a time, rebasing the next branch if an earlier merge conflicts with it, and `git pull --ff` on `main` after each. Report unresolved PRs to the user.
+6. **Repeat** for the next phase, and stop when all tasks are done
 
-- Reviewers post their feedback on GitHub pull request comments
-- Builder addresses all feedback
-- You ask for a review again
-- After successful and clean review, you make a decision to merge
+## Builder Instructions
 
-9. **Handle conflicts** — if workers produce conflicting changes, you will ask builders to review and resolve conflicts in their respective pull requests
-10. **Shut down** when all tasks are complete
+Builders run inside the phase workflow, each in its own worktree. The lead passes the task file path and full task details in the prompt. Each builder MUST:
 
-## Worker Agent Instructions
-
-Workers are spawned by the lead via the `Agent` tool. The lead passes the task ID and description in the prompt. Each worker MUST:
-
-1. **Read the task** with `TaskGet <task-id>` to get full requirements
-2. **Mark it in-progress** with `TaskUpdate`
-3. **Create a git worktree** — ALWAYS use a worktree, never work in the main checkout:
-
-   ```bash
-   git fetch origin && git pull --ff   # in main checkout first
-   git worktree add ../worktrees/swift-kindle-task-N -b task-N-description
-   cd ../worktrees/swift-kindle-task-N
-   ```
-
-   - Each task gets its own worktree and its own branch
-   - Branch off the latest `main`
-   - Work exclusively inside the worktree directory
-
-4. **Read existing code** before writing — understand the current state
-5. **Implement the task** — write code, tests, configs as needed
-6. **Verify the work** — run the project's quality checks:
+1. **Read the task file** and the existing code it touches before writing anything
+2. **Branch** off the latest `main` as `task-N-description`, and move the task file from `tasks/backlog/` to `tasks/in-progress/` in the first commit
+3. **Implement the task** — write code, tests, configs as needed
+4. **Verify the work** — run the project's quality checks:
    - `swift build` — builds cleanly
    - `swift test` — all tests pass
 - You are _required_ to have a strong suite of tests that follows Swift testing best practices.
 - You are _required_ to fix all build warnings and errors before committing.
 
-7. **Commit the work** with a descriptive message (include task ID):
+5. **Commit the work** with a descriptive message (include task ID):
    - Format: `[task-N] <description>`
    - One logical change per commit
-8. **Push and create a pull request** — MANDATORY for every task with code changes:
+6. **Move the task file** to `tasks/done/` in the PR's last commit, so merging the PR marks the task done
+7. **Push and create a pull request** — MANDATORY for every task with code changes:
 
    ```bash
    git push -u origin task-N-description
@@ -135,30 +107,19 @@ Workers are spawned by the lead via the `Agent` tool. The lead passes the task I
 
    - Every code change goes through a PR. No direct commits to `main` are allowed.
 
-9. **Update the task** via `TaskUpdate` with PR URL and status, so the lead knows to assign a reviewer
-10. **Respond to review comments**, push fixes, then merge the PR. You are required to resolve all review feedback, unless it introduces security problems that the reviewer did not catch.
-11. **Wait for the Leader to confirm successful Merge**.
-12. **Clean up the worktree** after merge:
-    ```bash
-    cd /Users/natikgadzhi/src/natikgadzhi/scrapes/Packages/KindleAPI
-    git worktree remove ../worktrees/swift-kindle-task-N
-    ```
-13. **Mark the task completed** with `TaskUpdate` (status: completed)
+8. **Return** the PR URL, check results, and the edge cases covered and not covered
+9. **Address review feedback** on the same branch and push. Resolve all of it, unless a change would introduce a security problem the reviewer did not catch; then say so on the PR.
 
-## Reviewer Agent Instructions
+## Reviewer Instructions
 
-Reviewers are spawned by the Lead agent with the PR number and task ID in their prompt.
+Reviewers run inside the phase workflow with the PR number, the task file path, and their review lens in the prompt. Each reviewer MUST:
 
-1. **Check out the PR branch** in a worktree:
-   ```bash
-   git worktree add ../worktrees/swift-kindle-review-N origin/task-N-description
-   cd ../worktrees/swift-kindle-review-N
-   ```
-2. **Check for conflicts** — ensure the branch rebases cleanly on latest `main`. If conflicts exist, flag them and request the worker to rebase.
+1. **Check out the PR** in its worktree with `gh pr checkout <number>`
+2. **Check for conflicts** — ensure the branch rebases cleanly on latest `main`. If conflicts exist, flag them and request a rebase.
 3. **Run all quality checks**:
    - `swift build` — builds cleanly
    - `swift test` — all tests pass (including new tests for the feature)
-4. **Verify the feature works** — read the task description and acceptance criteria, confirm the implementation satisfies each criterion
+4. **Verify the feature works** — read the task file's acceptance criteria and confirm the implementation satisfies each criterion
 5. **Code quality review**:
    - Use `/simplify` Claude skill / agent
    - Read every changed file in the diff (`gh pr diff`)
@@ -174,22 +135,17 @@ Reviewers are spawned by the Lead agent with the PR number and task ID in their 
    - Edge cases NOT covered (note whether they should be addressed now or later)
    - Any security concerns
    - Approve, request changes, or comment accordingly
-8. **Clean up the worktree** after review:
-   ```bash
-   cd /Users/natikgadzhi/src/natikgadzhi/scrapes/Packages/KindleAPI
-   git worktree remove ../worktrees/swift-kindle-review-N
-   ```
-9. **Update the task** via `TaskUpdate` with the review outcome
+8. **Return** the verdict and the list of required changes
 
 ## Git Conventions
 
-- The main checkout stays on `main`. Never switch branches here — workers use worktrees.
+- The main checkout stays on `main`. Never switch branches here — builders and reviewers use worktrees.
 - Do `git pull --ff` after every task is completed and merged.
 - Each task branch is based off the latest `main`.
 - Every code change goes through a PR — no direct commits to `main`.
-- Workers commit with messages: `[task-N] <description>`
+- Builders commit with messages: `[task-N] <description>`
 - One logical change per commit — don't bundle unrelated work
-- Workers should `git pull --rebase` before pushing to avoid conflicts
+- Builders should `git pull --rebase` before pushing to avoid conflicts
 
 ## Task File System
 
@@ -203,19 +159,19 @@ tasks/
 ```
 
 - Each task is a numbered markdown file (e.g. `01-refactor-endpoint-parsing.md`)
-- The lead agent creates task files in `backlog/` during planning
-- Workers move their task file to `in-progress/` when they start work
-- Workers move their task file to `done/` after the PR is merged and the task is complete
+- The lead creates task files in `backlog/` during planning
+- Builders move their task file to `in-progress/` in their first commit
+- Builders move their task file to `done/` in the PR's last commit, so it lands in `done/` when the PR merges
 - Task files contain the full specification: objective, acceptance criteria, dependencies, and notes
-- Moving task files between directories should be committed as part of the worker's branch
+- Task file moves are committed on the builder's branch
 
 ## Important Rules
 
 - **Always fetch before checking task status** — run `git fetch` and `git pull --ff` before answering questions about whether a task is done, what's been merged, or what state the codebase is in.
 - **Always read before writing** — understand existing code before changing it
 - **Test everything** — write tests for every task. If ambiguous what kind, ask the user
-- **Small, focused tasks** — each task should be completable in one agent session
-- **Explicit dependencies** — if task B needs task A's output, declare it with `addBlockedBy`
+- **Small, focused tasks** — each task should be completable by one builder agent
+- **Explicit dependencies** — if task B needs task A's output, put B in a later phase and note the dependency in its task file
 - **No premature abstraction** — build what's needed, not what might be needed
 - **Commit early and often** — small atomic commits, not monolithic ones
 - **Always verify with end-to-end tests** — business logic correctness matters, not just code presence
